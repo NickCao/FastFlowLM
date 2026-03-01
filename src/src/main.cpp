@@ -194,12 +194,32 @@ void handle_user_input(bool sub_process_mode) {
     }
 
     std::string input;
+    bool prompt_shown = false;
+    bool eof_notified = false;
     while (!should_exit) {
-        if (!sub_process_mode){
+        if (!sub_process_mode && !prompt_shown){
             header_print("FLM", "Enter 'exit' or use 'Ctrl+C' to stop the server: ");
+            prompt_shown = true;
         }
 
-        std::getline(*input_stream, input);
+        if (!std::getline(*input_stream, input)) {
+            if (input_stream->eof()) {
+                if (!sub_process_mode && !eof_notified) {
+                    header_print("FLM", "EOF detected. Server continues running; type 'exit' when input is available.");
+                    eof_notified = true;
+                }
+            }
+            else if (!sub_process_mode) {
+                header_print_r("FLM", "Input stream error detected. Retrying input.");
+            }
+
+            input_stream->clear();
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+            continue;
+        }
+
+        prompt_shown = false;
+        eof_notified = false;
 
         if (input == "exit") {
             should_exit = true;
