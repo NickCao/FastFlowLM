@@ -13,6 +13,7 @@
 #include "utils/utils.hpp"
 #include "program_args.hpp"
 #include "minja/chat-template.hpp"
+#include <cstring>
 #include <iostream>
 #include <string>
 #include <thread>
@@ -57,6 +58,14 @@ std::atomic<bool> should_exit(false);
 void preload_bundled_libraries() {
     std::string exe_dir = utils::get_executable_directory();
 
+    // When running inside a snap, LD_LIBRARY_PATH already points at the
+    // bundled XRT libs (e.g. $SNAP/usr/lib/x86_64-linux-gnu).  Passing a
+    // bare library name lets the dynamic linker resolve it via
+    // LD_LIBRARY_PATH, which avoids hard-coding the arch triplet.
+    // Outside of a snap the libs are expected to live next to the binary.
+    const char* snap_env = std::getenv("SNAP");
+    std::string lib_prefix = snap_env && *snap_env ? "" : exe_dir + "/";
+
     const std::vector<std::string> libraries = {
         "libxrt_core.so.2",           // Core - no dependencies
         "libxrt_coreutil.so.2",       // Depends on core
@@ -66,7 +75,7 @@ void preload_bundled_libraries() {
     // Try to load the library with RTLD_GLOBAL so symbols are available to dependent libraries
     // Don't care about failures
     for (const auto& lib : libraries) {
-        std::string lib_path = exe_dir + "/" + lib;
+        std::string lib_path = lib_prefix + lib;
         void* handle = dlopen(lib_path.c_str(), RTLD_LAZY | RTLD_GLOBAL);
     }
 }
@@ -148,9 +157,8 @@ void handle_user_input(bool sub_process_mode) {
         if (!sub_process_mode){
             header_print("FLM", "Enter 'exit' to stop the server: ");
         }
-        
-        std::getline(std::cin, input);
-        if (input == "exit") {
+        if (!std::getline(std::cin, input)) {
+            // Handle EOF or input error to avoid spinning in a tight loop
             should_exit = true;
             break;
         }
@@ -243,6 +251,7 @@ static bool sanity_check_npu_stack(bool quiet, bool json_output = false) {
         {"kernel_ok", true},
         {"amd_device_found", true},
         {"all_fw_ok", true},
+        {"enough_cols", true},
         {"memlock_ok", true},
         {"devices", nlohmann::json::array()},
         {"ok", true}
@@ -263,7 +272,7 @@ static bool sanity_check_npu_stack(bool quiet, bool json_output = false) {
     }
     int major, minor;
     sscanf(u_name.release, "%d.%d", &major, &minor);
-    bool kernel_ok = (major > 6) || (major == 6 && minor >= 14);
+    bool kernel_ok = (major > 6) || (major == 6 && minor >= 17);
     validation_json["kernel"] = u_name.release;
     validation_json["kernel_ok"] = kernel_ok;
     if (!kernel_ok) {
@@ -282,7 +291,9 @@ static bool sanity_check_npu_stack(bool quiet, bool json_output = false) {
 
     // Check firmware version of all AMD devices
     bool all_fw_ok = true;
+    bool enough_cols = true;
     bool amd_device_found = false;
+    bool drm_version_ok = true;
 
     for (int i = 0; i < 16; ++i) {
         std::string dev_name = "/dev/accel/accel" + std::to_string(i);
@@ -294,6 +305,19 @@ static bool sanity_check_npu_stack(bool quiet, bool json_output = false) {
             continue;
         }
 
+        struct drm_version drm_v;
+        memset(&drm_v, 0, sizeof(drm_v));
+        std::string drm_version_str = "unknown";
+        if (ioctl(fd, DRM_IOCTL_VERSION, &drm_v) == 0) {
+            drm_version_str = std::to_string(drm_v.version_major) + "." + std::to_string(drm_v.version_minor);
+            if (!(drm_v.version_major > 0 || (drm_v.version_major == 0 && drm_v.version_minor >= 6))) {
+                drm_version_ok = false;
+            }
+        } else {
+            drm_version_ok = false;
+        }
+        validation_json["drm_version"] = drm_version_str;
+
         amdxdna_drm_query_firmware_version query_fw_version;
         amdxdna_drm_get_info get_info = {
             .param = DRM_AMDXDNA_QUERY_FIRMWARE_VERSION,
@@ -302,8 +326,8 @@ static bool sanity_check_npu_stack(bool quiet, bool json_output = false) {
         };
 
         int ret = ioctl(fd, DRM_IOCTL_AMDXDNA_GET_INFO, &get_info);
-        close(fd);
         if (ret < 0) {
+            close(fd);
             // ENOTTY means it's not an AMD device, just ignore it.
             if (errno != ENOTTY) {
                  if (!quiet) {
@@ -324,23 +348,52 @@ static bool sanity_check_npu_stack(bool quiet, bool json_output = false) {
             {"fw_build", query_fw_version.build}
         };
 
-        if (print_human) {
-            header_print_g("Linux", "NPU: " + dev_name);
-            header_print_g("Linux", "NPU FW Version: " << query_fw_version.major << "." << query_fw_version.minor << "." << query_fw_version.patch << "." << query_fw_version.build);
-        }
-
         bool fw_ok = (query_fw_version.major > 1 || (query_fw_version.major == 1 && query_fw_version.minor >= 1));
         device_entry["fw_ok"] = fw_ok;
-        validation_json["devices"].push_back(device_entry);
         if (!fw_ok) {
             all_fw_ok = false;
             if (print_human) {
                 header_print_r("ERROR", "NPU firmware version on " + dev_name + " is incompatible. Please update NPU firmware!");
             }
         }
+
+        amdxdna_drm_query_aie_metadata query_aie_metadata;
+        get_info.param = DRM_AMDXDNA_QUERY_AIE_METADATA;
+        get_info.buffer_size = sizeof(amdxdna_drm_query_aie_metadata);
+        get_info.buffer = (unsigned long)&query_aie_metadata;
+        if (ioctl(fd, DRM_IOCTL_AMDXDNA_GET_INFO, &get_info) == 0) {
+            device_entry["cols"] = query_aie_metadata.cols;
+            if (query_aie_metadata.cols < 8) {
+                enough_cols = false;
+                if (print_human) {
+                    header_print_r("ERROR", "NPU " + dev_name + " does not have enough columns (" << query_aie_metadata.cols << " < 8)");
+                }
+            }
+        }
+        close(fd);
+
+        if (print_human) {
+            header_print_g("Linux", "NPU: " + dev_name + " with " + std::to_string(query_aie_metadata.cols) + " columns");
+            header_print_g("Linux", "NPU FW Version: " << query_fw_version.major << "." << query_fw_version.minor << "." << query_fw_version.patch << "." << query_fw_version.build);
+        }
+
+        validation_json["devices"].push_back(device_entry);
     }
     validation_json["amd_device_found"] = amd_device_found;
     validation_json["all_fw_ok"] = all_fw_ok;
+    validation_json["enough_cols"] = enough_cols;
+
+    if (amd_device_found) {
+        if (!drm_version_ok)
+            kernel_ok = false;
+        if (print_human) {
+            if (drm_version_ok)
+                header_print_g("Linux", "amdxdna version: " << validation_json["drm_version"].get<std::string>());
+            else
+                header_print_r("ERROR", "amdxdna version " << validation_json["drm_version"].get<std::string>() << " is incompatible");
+        }
+    }
+    validation_json["kernel_ok"] = kernel_ok;
 
     if (!amd_device_found && print_human) {
         header_print_r("ERROR", "No NPU device found.");
@@ -371,7 +424,7 @@ static bool sanity_check_npu_stack(bool quiet, bool json_output = false) {
     }
     validation_json["memlock_ok"] = memlock_ok;
 
-    bool overall_ok = amd_device_found && kernel_ok && all_fw_ok && memlock_ok;
+    bool overall_ok = amd_device_found && kernel_ok && all_fw_ok && enough_cols && memlock_ok;
     validation_json["ok"] = overall_ok;
     if (json_output) {
         std::cout << validation_json.dump(4) << std::endl;
