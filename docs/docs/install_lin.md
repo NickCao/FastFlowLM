@@ -124,7 +124,7 @@ sudo apt install ./fastflowlm*.deb
 
 ### Ubuntu 26.04, Arch, and Others
 
-Check this https://lemonade-server.ai/flm_npu_linux.html
+Check this [https://lemonade-server.ai/flm_npu_linux.html](https://lemonade-server.ai/flm_npu_linux.html)
 
 ---
 
