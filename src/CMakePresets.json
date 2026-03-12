@@ -23,6 +23,17 @@
       }
     },
     {
+      "name": "linux-snap",
+      "displayName": "Linux Snap Build",
+      "description": "Configuration for building inside a snapcraft part",
+      "inherits": "common-default",
+      "generator": "Ninja",
+      "binaryDir": "$env{CRAFT_PART_BUILD}",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release"
+      }
+    },
+    {
       "name": "windows-default",
       "displayName": "Windows Default",
       "description": "Default configuration for Windows using Visual Studio",
