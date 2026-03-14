@@ -50,10 +50,11 @@ std::string Qwen3_5VL::apply_chat_template(nlohmann::ordered_json& messages, nlo
     minja::chat_template_inputs inputs;
     inputs.add_generation_prompt = true;
     inputs.messages = messages;
-    
+    inputs.extra_context = this->extra_context;
+    this->enable_think = false; // disable think for qwen3.5vl, as it doesn't perform well with think
+    inputs.extra_context["enable_thinking"] = this->enable_think;
     if (!tools.empty())
         inputs.tools = tools;
-    inputs.extra_context = this->extra_context;
     return this->chat_tmpl->apply(inputs);
 }
 
