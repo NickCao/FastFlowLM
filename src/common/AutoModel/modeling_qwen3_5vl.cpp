@@ -29,11 +29,11 @@ void Qwen3_5VL::load_model(std::string model_path, json model_info, int default_
 
     sampler_config config;
     config.top_k = 20;
-    config.top_p = 0.95;
+    config.top_p = 0.8;
     config.min_p = 0.0;
-    config.temperature = 1.0;
-    config.rep_penalty = 1.05;
-    config.freq_penalty = 1.05;
+    config.temperature = 0.7;
+    config.rep_penalty = 1.0;
+    config.freq_penalty = 1.0;
     config.pre_penalty = 1.5f;
 
     this->set_sampler(config);
