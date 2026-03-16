@@ -64,17 +64,24 @@ sudo apt install ./fastflowlm*.deb
 
 ### Building from Source
 
-1. Clone the repository:
+1. Ensure all required development packages are installed:
    ```sh
-   git clone https://github.com/FastFlowLM/FastFlowLM.git
+   sudo apt install ninja
+   sudo apt install libavformat-dev  libavutil-dev libavcodec-dev libswresample-dev libswscale-dev libxrt-dev uuid-dev libdrm-dev
+   ```
+
+2. Clone the repository and pull all submodules:
+   ```sh
+   git clone --recursive https://github.com/FastFlowLM/FastFlowLM.git
    cd FastFlowLM
    ```
-2. Build:
+3. Build:
    ```sh
    cd src
    cmake --preset linux-default
-   cmake --build --preset linux-default -j$(nproc)
-   cmake --install --preset linux-default
+   cd build
+   cmake --build . -j$(nproc)
+   sudo cmake --install .
    ```
 
 ---
