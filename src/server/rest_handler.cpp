@@ -182,7 +182,10 @@ RestHandler::RestHandler(model_list& models, ModelDownloader& downloader, progra
             header_print("Warning", "Default model tag '" << default_model_tag << "' is not supported. Falling back to 'llama3.2:1b'.");
             this->default_model_tag = "llama3.2:1b";
         }
-        ensure_model_loaded(default_model_tag);
+        if (!ensure_model_loaded(default_model_tag)) {
+            header_print("Error", "Failed to load default model: " + default_model_tag);
+            this->current_model_tag = "model-faker";
+        }
     }
     else {
         this->current_model_tag = "model-faker";
@@ -196,7 +199,7 @@ RestHandler::~RestHandler() = default;
 
 ///@brief Ensure the model is loaded
 ///@param model_tag the model tag
-void RestHandler::ensure_model_loaded(const std::string& model_tag) {
+bool RestHandler::ensure_model_loaded(const std::string& model_tag) {
     std::string ensure_tag = model_tag;
     if (current_model_tag != ensure_tag) {
         std::this_thread::sleep_for(std::chrono::milliseconds(500));
@@ -216,10 +219,12 @@ void RestHandler::ensure_model_loaded(const std::string& model_tag) {
         }
         catch (const std::exception& e) {
             header_print("ERROR", "Failed to load model: " + std::string(e.what()));
-            exit(EXIT_FAILURE);
+            std::cerr << "Failed to load model: " << e.what() << std::endl;
+            return false;
         }
         current_model_tag = ensure_tag;
     }
+    return true;
 }
 
 ///@brief Ensure the asr model is loaded
@@ -400,7 +405,12 @@ void RestHandler::handle_generate(const json& request,
         int length_limit = request.value("max_tokens", 4096);
         auto load_start_time = time_utils::now();
         // TODO: Use Another Check Function avoid loading again
-        ensure_model_loaded(model);
+        if (!ensure_model_loaded(model)) {
+            json error_response = {{"error", "Failed to load " + model + " model!"}};
+            send_response(error_response);
+            this->current_model_tag = "model-faker"; // No model get loaded
+            return;
+        }
         auto load_end_time = time_utils::now();
       
         chat_meta_info_t meta_info;
@@ -508,7 +518,12 @@ void RestHandler::handle_chat(const json& request,
         int length_limit = options.value("num_predict", 4096);
 
         auto load_start_time = time_utils::now();
-        ensure_model_loaded(model);
+        if (!ensure_model_loaded(model)) {
+            json error_response = {{"error", "Failed to load " + model + " model!"}};
+            send_response(error_response);
+            this->current_model_tag = "model-faker";
+            return;
+        }
         auto load_end_time = time_utils::now();
        
         configure_chat_engine_parameters(options, request);
@@ -853,7 +868,12 @@ void RestHandler::handle_openai_chat_completion(const json& request,
         json options = request.value("options", json::object());
 
         auto load_start_time = time_utils::now();
-        ensure_model_loaded(model);
+        if (!ensure_model_loaded(model)) {
+            json error_response = {{"error", "Failed to load " + model + " model!"}};
+            send_response(error_response);
+            this->current_model_tag = "model-faker";
+            return;
+        }
         auto load_end_time = time_utils::now();
 
         current_messages = normalize_messages(current_messages);
@@ -1119,7 +1139,12 @@ void RestHandler::handle_openai_completion(const json& request,
        
         int length_limit = request.value("max_tokens", 4096);
 
-        ensure_model_loaded(model);
+         if (!ensure_model_loaded(model)) {
+            json error_response = {{"error", "Failed to load " + model + " model!"}};
+            send_response(error_response);
+            this->current_model_tag = "model-faker";
+            return;
+        }
 
         configure_chat_engine_parameters(options, request);
 
