@@ -7,7 +7,7 @@ nav_order: 7
 
 ## ⚡ Performance and Efficiency Benchmarks
 
-This section reports the performance of Qwen 3 on NPU with FastFlowLM (FLM).
+This section reports the performance of Qwen 3.5 on NPU with FastFlowLM (FLM).
 
 > **Note:** 
 > - Results are based on FastFlowLM v0.9.36.  
